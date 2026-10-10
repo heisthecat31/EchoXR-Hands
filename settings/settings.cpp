@@ -44,11 +44,11 @@ using namespace Gdiplus;
 
 // ---------------------------------------------------------------------------
 // the settings (keys and meanings: plugin/handtracking.cpp ApplyConfigText,
-// bridge/bridge.cpp LoadSettings, and the comments in EchoXRHands.txt)
+// layer/layer.cpp ReadSettings, and the comments in EchoXRHands.txt)
 // ---------------------------------------------------------------------------
 enum Kind { K_BOOL, K_NUM, K_CHOICE, K_TEXT };
-enum Applies { AP_LIVE, AP_GAME, AP_BRIDGE };   // when a change takes effect
-enum { PG_GENERAL, PG_POSE, PG_FINGERS, PG_SMOOTH, PG_AXES, PG_SHARING, PG_BRIDGE, PG_COUNT };
+enum Applies { AP_LIVE, AP_GAME };   // when a change takes effect
+enum { PG_GENERAL, PG_POSE, PG_FINGERS, PG_SMOOTH, PG_AXES, PG_SHARING, PG_TRACKING, PG_COUNT };
 
 struct Field {
     int page; const char* key; Kind kind; const wchar_t* title; const wchar_t* desc;
@@ -75,12 +75,12 @@ static const char* kSign = "1=Normal|-1=Flipped";
 static const std::vector<Field> kFields = {
     Bool(PG_GENERAL, "Enabled", L"Hand tracking", L"Pose your in-game hands from your real fingers. Off leaves Echo's own finger animation."),
     Bool(PG_GENERAL, "AutoCalibrate", L"Calibrate automatically", L"Capture the open-hand reference the first time both hands are fully open."),
-    Bool(PG_GENERAL, "CalibrateOnLaunch", L"Calibrate hands automatically 10 seconds after Echo launches", L"The finger bridge asks you out loud to hold your hands in front of your face, flat out, counts down from 3, then calibrates. Once per launch; needs the finger bridge running.", AP_GAME),
+    Bool(PG_GENERAL, "CalibrateOnLaunch", L"Calibrate hands automatically 10 seconds after Echo launches", L"10 seconds after Echo VR is first in your headset, the open-hand pose is taken: hold both hands open and flat then. Once per launch.", AP_GAME),
     Num (PG_GENERAL, "OpenThreshold", L"Open-hand threshold", L"A hand counts as fully open when every finger's curl is below this.", 0, 0.5f, 0.01f),
     Bool(PG_GENERAL, "UseRig", L"Pose from the chassis rig", L"Build poses from the rig's own bind pose (recommended). Off uses a pose captured in-game."),
     Bool(PG_GENERAL, "RespectContact", L"Let go on contact", L"Leave a hand to the engine while it wraps around a surface."),
     Num (PG_GENERAL, "ContactHoldMs", L"Contact hold", L"After a hand stops touching something, leave it to the engine this long. Stops flicker.", 0, 500, 10, L" ms"),
-    Num (PG_GENERAL, "StaleMs", L"Stale tracking", L"Drop tracking older than this (bridge closed, SteamVR hitch).", 50, 1000, 10, L" ms"),
+    Num (PG_GENERAL, "StaleMs", L"Stale tracking", L"Drop tracking older than this (hands out of view, a runtime hitch).", 50, 1000, 10, L" ms"),
     Num (PG_GENERAL, "TargetInstance", L"Your hand animator", L"Which hand-animator instance is you. EchoXRHands.log lists them; -1 poses every player with your hands.", -1, 15, 1),
     Pick(PG_GENERAL, "GameHandLeft", L"Left hand slot", L"Which of the game's two hand slots is your left hand. Swap if your hands are mirrored.", "0=Slot 0|1=Slot 1"),
 
@@ -128,8 +128,7 @@ static const std::vector<Field> kFields = {
     Str (PG_SHARING, "Platform", L"Platform (experimental)", L"Your user ID's platform prefix, e.g. STM. Empty = leave it. Don't use this on EchoVRCE.", L"off", AP_GAME),
     Str (PG_SHARING, "PlatformAccount", L"Platform account", L"The number after the prefix. For STM, your SteamID64 (17 digits). Empty = keep it.", L"keep", AP_GAME),
 
-    Pick(PG_BRIDGE, "FingerSource", L"Finger source", L"Device: Index finger sensing. Bones: the hand skeleton (other controllers, hand tracking). Auto picks per controller.", "auto=Auto|device=Device|bones=Bones", AP_BRIDGE),
-    Bool(PG_BRIDGE, "CalibrateHotkey", L"Calibrate hotkey", L"Ctrl+Alt+C recalibrates the open-hand pose. Off frees the hotkey.", AP_BRIDGE),
+    Bool(PG_TRACKING, "CalibrateHotkey", L"Calibrate hotkey", L"Ctrl+Alt+C recalibrates the open-hand pose. Off frees the hotkey.", AP_GAME),
 };
 
 struct PageInfo { const wchar_t* name; wchar_t icon; const wchar_t* blurb; };
@@ -140,7 +139,7 @@ static const PageInfo kPages[PG_COUNT] = {
     { L"Smoothing", 0xE9D9, L"The jitter filter: steady while still, responsive while moving." },
     { L"Axes",      0xE7AD, L"Troubleshooting for fingers or thumbs that bend the wrong way." },
     { L"Sharing",   0xE774, L"Showing your fingers to other players, and seeing theirs." },
-    { L"Bridge",    0xE703, L"The finger bridge (EchoXRHands.exe) reads these when it starts." },
+    { L"Tracking",  0xE703, L"Your fingers come from OpenXR hand tracking in Echo VR's own session; these are read when Echo VR starts." },
 };
 
 struct Choice { std::string v; std::wstring label; };
@@ -258,7 +257,7 @@ static void SetStatus(const std::wstring& s, DWORD tint, wchar_t icon) {
     if (g_wnd) InvalidateRect(g_wnd, nullptr, FALSE);
 }
 
-// Sends one text datagram to the plugin (the bridge's --set syntax) and waits for its reply.
+// Sends one text datagram to the plugin ("Key = Value", as the plugin reads them) and waits for its reply.
 static bool SendToPlugin(const char* text, std::string& reply, int timeoutMs) {
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) return false;
@@ -412,8 +411,7 @@ static bool WriteConfig(DWORD& err) {
 static void SavedStatus() {
     Applies ap = AP_LIVE;
     for (int f : g_pending) ap = max(ap, kFields[f].ap);
-    if (ap == AP_BRIDGE) SetStatus(L"Saved. Restart the finger bridge (EchoXRHands.exe) to use it.", kWarn, 0xE7BA);
-    else if (ap == AP_GAME) SetStatus(L"Saved. It takes effect the next time Echo starts.", kWarn, 0xE7BA);
+    if (ap == AP_GAME) SetStatus(L"Saved. It takes effect the next time Echo starts.", kWarn, 0xE7BA);
     else if (g_live == 1) SetStatus(L"Saved. The game picks it up within half a second.", kGood, 0xE73E);
     else SetStatus(L"Saved. It takes effect when Echo starts.", kGood, 0xE73E);
 }
@@ -600,7 +598,7 @@ static void PaintRow(Graphics& g, int f, RectF r) {
     if (F.ap != AP_LIVE) {
         RectF m;
         g.MeasureString(F.title, -1, g_fBodyB, PointF(0, 0), &m);
-        Pill(g, r.X + 20 + m.Width + 8, r.Y + 25, F.ap == AP_BRIDGE ? L"Restart bridge" : L"Next launch", kWarn);
+        Pill(g, r.X + 20 + m.Width + 8, r.Y + 25, L"Next launch", kWarn);
     }
     Text(g, F.desc, g_fSmall, C(kMuted), RectF(r.X + 20, r.Y + 40, tw, r.Height - 48), A_LEFT, true);
 

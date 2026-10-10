@@ -7,9 +7,9 @@
     python fake_index.py --hand left      only the left hand (default: both)
     python fake_index.py --mirror         both hands do the same pose
 
-It stands in for EchoXRHands.exe: it sends the exact HtvFrame packets the
-bridge sends, to the plugin on 127.0.0.1:8768, at the bridge's ~120 Hz. Close the
-real bridge first -- both would feed the same port.
+It stands in for the hand tracking layer: it sends the HtvFrame packets the layer
+sends, to the plugin on 127.0.0.1:8768, at about 120 Hz. Don't run it beside Echo VR
+with hand tracking on -- both would feed the same port.
 
 HOW IT MIMICS AN INDEX CONTROLLER
 ---------------------------------

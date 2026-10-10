@@ -1,12 +1,12 @@
-// HandTrackingValve wire format -- shared by the bridge (sender) and the plugin
-// (receiver). Loopback UDP only.
+// The hand tracking wire format -- shared by the OpenXR layer (sender, layer/layer.cpp)
+// and the plugin (receiver). Loopback UDP only.
 //
 // Two kinds of datagram arrive on HTV_PORT:
 //   * a binary HtvFrame, recognised by its magic, sent ~120 times a second;
 //   * plain "Key = Value" text, the same syntax as handtracking_config.txt,
-//     applied immediately (the bridge's --set option sends these). Two text queries
+//     applied immediately (the layer's calibration and the settings window send these). Two text queries
 //     are answered instead: "Ping" -> "PONG", and "Uptime" -> "UP <ms since the
-//     plugin loaded>", which the bridge uses to spot a fresh Echo launch.
+//     plugin loaded>", for checking on the plugin.
 #pragma once
 #include <stdint.h>
 

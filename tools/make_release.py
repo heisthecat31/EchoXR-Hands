@@ -1,113 +1,89 @@
-"""Builds the EchoXR Hands release: out/release/EchoXR-Hands-v<VERSION>.zip, published at
-github.com/heisthecat31/EchoXR-Hands (EchoXR.exe downloads it from there).
+"""Builds the EchoXR Hands release the Echo VR launcher installs:
+out/release/EchoXR-Hands-v<VERSION>-nevr.zip (and its .sha256).
 
-    python tools/make_release.py              build, then package
-    python tools/make_release.py --no-build   package what's already built
+    python3 tools/make_release.py              build (CMake, build/), then package
+    python3 tools/make_release.py --no-build   package what's already in out/
 
-The zip unpacks into Echo VR's bin\\win10 folder:
+The zip unpacks into Echo VR's bin\\win10 folder. Everything is under EchoXR\\Hands\\; the
+launcher copies the plugin and its settings into bin\\win10\\plugins\\ itself (nEVR loads
+plugins from there), so there is deliberately no install\\ folder:
 
-    EchoXR\\Hands\\                   finger bridge (EchoXRHands.exe), its SteamVR files,
-                                    settings window, README.txt, version.txt
-    EchoXR\\Hands\\install\\           hand tracking plugin, default settings, plugin loader;
-                                    EchoXR.exe or EchoXRHands.exe puts these into the game folder
+    EchoXR\\Hands\\plugin\\EchoXRHands.dll, EchoXRHands.txt   the nEVR plugin, default settings
+    EchoXR\\Hands\\layer\\                                     the OpenXR API layer + manifest
+    EchoXR\\Hands\\EchoXRSettings.exe                          the settings window
+    EchoXR\\Hands\\README.txt, version.txt
 
-version.txt holds the release tag; EchoXR.exe compares it with the latest release to
-offer updates. Raise VERSION for every release.
-
-Two inputs aren't built here: third_party/openvr_api.dll (Valve's OpenVR runtime
-library, from github.com/ValveSoftware/openvr bin/win64) and stage/dbgcore.dll (the
-plugin loader, copied from an Echo install that has it; ECHO_BIN points at one).
+Raise VERSION for every release (and the plugin's NvrPluginGetInfo version with it).
 """
+import hashlib
 import os
-import shutil
 import subprocess
 import sys
 import zipfile
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 VERSION = open(os.path.join(ROOT, "VERSION"), encoding="utf-8").read().strip()
-ECHO_BIN = os.environ.get("ECHO_BIN", r"C:\Oculus\Games\Software\Software\ready-at-dawn-echo-arena\bin\win10")
 
 # (source relative to ROOT, path inside the zip)
 FILES = [
-    ("out/EchoXRHands.exe",                  "EchoXR/Hands/EchoXRHands.exe"),
-    ("out/EchoXRSettings.exe",               "EchoXR/Hands/EchoXRSettings.exe"),
-    ("out/htv_actions.json",                 "EchoXR/Hands/htv_actions.json"),
-    ("out/htv_bindings_knuckles.json",       "EchoXR/Hands/htv_bindings_knuckles.json"),
-    ("third_party/openvr_api.dll",           "EchoXR/Hands/openvr_api.dll"),
-    ("tools/fake_index.py",                  "EchoXR/Hands/fake_index.py"),
-    ("out/EchoXRHands.dll",                  "EchoXR/Hands/install/EchoXRHands.dll"),
-    ("out/EchoXRHands.txt",                  "EchoXR/Hands/install/EchoXRHands.txt"),
-    ("stage/dbgcore.dll",                    "EchoXR/Hands/install/dbgcore.dll"),
+    ("out/EchoXRHands.dll",                          "EchoXR/Hands/plugin/EchoXRHands.dll"),
+    ("out/EchoXRHands.txt",                          "EchoXR/Hands/plugin/EchoXRHands.txt"),
+    ("out/layer/XrApiLayer_EchoXR_Hands.dll",        "EchoXR/Hands/layer/XrApiLayer_EchoXR_Hands.dll"),
+    ("out/layer/XrApiLayer_EchoXR_Hands.json",       "EchoXR/Hands/layer/XrApiLayer_EchoXR_Hands.json"),
+    ("out/EchoXRSettings.exe",                       "EchoXR/Hands/EchoXRSettings.exe"),
 ]
-FOLDERS = ("EchoXR/", "EchoXR/Hands/", "EchoXR/Hands/install/")
+FOLDERS = ("EchoXR/", "EchoXR/Hands/", "EchoXR/Hands/plugin/", "EchoXR/Hands/layer/")
 
 README = """EchoXR Hands {version}
 =================
-Per-finger hand tracking for Echo VR: your own fingers on your chassis hands, and
-other players'. Works however you run Echo: the Oculus / Meta runtime, or EchoXR
-(https://github.com/heisthecat31/EchoXR/releases).
+Your own fingers on Echo VR's hands, and other players'. Made by heisthecat31:
+https://github.com/EchoTools/EchoXR-Hands
 
-With EchoXR
------------
-Set AutoStartHands = 1 in EchoXR\\echoxr.ini and EchoXR.exe installs this for you,
-runs the finger bridge alongside Echo and offers hand tracking updates. Or unzip it
-into bin\\win10 as below; EchoXR.exe then does the rest.
+Your fingers come from OpenXR hand tracking in Echo VR's own session (SteamVR, WiVRn,
+Monado), through the layer in layer\\; the nEVR plugin (plugin\\EchoXRHands.dll, which
+the Echo VR launcher puts into bin\\win10\\plugins\\) poses the hands and shares fingers.
+The launcher installs and enables all of it: Mods, More mods, EchoXR Hands.
 
-Install
--------
-1. Unzip into Echo VR's bin\\win10 folder, the one with echovr.exe. You should end
-   up with an EchoXR\\Hands folder there.
-2. Install SteamVR (free, on Steam): the finger bridge reads your fingers from it.
-3. Run EchoXR\\Hands\\EchoXRHands.exe. Each start, it puts the hand tracking plugin
-   into bin\\win10\\plugins\\ and, if needed, the plugin loader (dbgcore.dll). An
-   older 45 KB dbgcore.dll moves to plugins\\dbgcore_legacy.dll and keeps loading;
-   a different plugin loader is kept; anything else is left alone (run
-   EchoXRSetup.exe then). EchoXRHands.exe --setup does only this and exits.
-4. Start Echo VR while the bridge is running.
+Hold both hands fully open once in-game to calibrate; Ctrl+Alt+C recalibrates.
+Settings: EchoXRSettings.exe, or bin\\win10\\plugins\\EchoXRHands.txt.
+Logs: bin\\win10\\plugins\\EchoXRHands.log and EchoXR\\Hands\\layer.log.
 
-Hand tracking
--------------
-In-game, hold both hands fully open once: that calibrates the open-hand pose.
-Press Ctrl+Alt+C (hands open) to recalibrate at any time.
-Valve Index controllers give full finger sensing; other controllers and
-controller-free hand tracking use the SteamVR hand skeleton.
-Settings: run EchoXR\\Hands\\EchoXRSettings.exe. Changes show in-game as you make
-them; they're stored in bin\\win10\\plugins\\EchoXRHands.txt (re-read while the game runs).
-Finger sharing: the plugin sends your fingers through a relay so other players
-running it can see them, and shows theirs (Network = 0 turns this off; it sends
-your display name and your match's player names so the relay can pair you up).
-
-Log: plugins\\EchoXRHands.log. openvr_api.dll is Valve's (BSD-3-Clause).
+Finger sharing (Network = 1) sends your finger curls, your display name and your
+match's player names to the hand tracking relay; the launcher installs it off.
 """
 
 
-def main():
-    if "--no-build" not in sys.argv:
-        subprocess.check_call(["cmd", "/c", os.path.join(ROOT, "build.bat")], cwd=ROOT)
-    loader = os.path.join(ROOT, "stage", "dbgcore.dll")
-    if not os.path.isfile(loader) and os.path.isfile(os.path.join(ECHO_BIN, "dbgcore.dll")):
-        os.makedirs(os.path.dirname(loader), exist_ok=True)
-        shutil.copyfile(os.path.join(ECHO_BIN, "dbgcore.dll"), loader)
-    missing = [src for src, _ in FILES if not os.path.isfile(os.path.join(ROOT, src))]
-    if missing:
-        sys.exit("missing inputs:\n  " + "\n  ".join(missing))
+def build():
+    subprocess.check_call(["cmake", "--build", os.path.join(ROOT, "build")], cwd=ROOT)
+
+
+def package():
     out = os.path.join(ROOT, "out", "release")
     os.makedirs(out, exist_ok=True)
-    path = os.path.join(out, "EchoXR-Hands-v%s.zip" % VERSION)
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-        for d in FOLDERS:   # explicit folder entries, so every unzip tool creates them
-            z.writestr(zipfile.ZipInfo(d), "")
+    made = os.path.join(out, "EchoXR-Hands-v%s-nevr.zip" % VERSION)
+    with zipfile.ZipFile(made, "w", zipfile.ZIP_DEFLATED) as z:
+        for folder in FOLDERS:
+            info = zipfile.ZipInfo(folder, (2026, 1, 1, 0, 0, 0))
+            info.external_attr = 0o40755 << 16
+            z.writestr(info, "")
         for src, dst in FILES:
-            info = zipfile.ZipInfo.from_file(os.path.join(ROOT, src), dst)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            with open(os.path.join(ROOT, src), "rb") as f:
-                z.writestr(info, f.read())
-        z.writestr("EchoXR/Hands/README.txt", README.format(version="v" + VERSION).replace("\n", "\r\n"))
-        z.writestr("EchoXR/Hands/version.txt", "v%s\r\n" % VERSION)
-    print("%s  %.1f KB  -> heisthecat31/EchoXR-Hands, tag v%s" %
-          (os.path.relpath(path, ROOT), os.path.getsize(path) / 1024, VERSION))
+            path = os.path.join(ROOT, src)
+            if not os.path.isfile(path):
+                sys.exit("missing %s: build first" % src)
+            z.write(path, dst)
+        for name, text in (("EchoXR/Hands/README.txt", README.format(version="v" + VERSION)),
+                           ("EchoXR/Hands/version.txt", "v%s\n" % VERSION)):
+            info = zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0))
+            info.external_attr = 0o644 << 16
+            z.writestr(info, text.replace("\n", "\r\n"))
+    digest = hashlib.sha256(open(made, "rb").read()).hexdigest()
+    with open(made + ".sha256", "w") as f:
+        f.write("%s  %s\n" % (digest, os.path.basename(made)))
+    print(made)
+    print(digest)
 
 
 if __name__ == "__main__":
-    main()
+    if "--no-build" not in sys.argv:
+        build()
+    package()

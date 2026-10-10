@@ -1,0 +1,11 @@
+{
+    "file_format_version": "1.0.0",
+    "api_layer": {
+        "name": "XR_APILAYER_ECHOTOOLS_echoxr_hands",
+        "library_path": ".\\XrApiLayer_EchoXR_Hands.dll",
+        "api_version": "1.0",
+        "implementation_version": "1",
+        "description": "EchoXR Hands: your fingers from OpenXR hand tracking to the EchoXR Hands plugin",
+        "disable_environment": "DISABLE_ECHOXR_HANDS_LAYER"
+    }
+}

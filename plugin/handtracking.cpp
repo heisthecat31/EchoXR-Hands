@@ -1315,14 +1315,14 @@ static void UdpThread() {
             memcpy(&g_Frame, buf.data(), sizeof(HtvFrame));
             g_FrameTick = GetTickCount64();
             Net_SetLocal(g_Frame.curl, g_Frame.splay, g_Frame.valid);
-            if (!announced) { announced = true; Log("receiving tracking frames from the bridge"); }
+            if (!announced) { announced = true; Log("receiving tracking frames from the hand tracking layer"); }
             continue;
         }
         buf[n] = 0;
         std::string text(buf.data(), n);
         std::string reply;
         if (Trim(text) == "Ping") reply = "PONG";
-        else if (Trim(text) == "Uptime") reply = "UP " + std::to_string(GetTickCount64() - g_LoadTick);   // the bridge's launch check
+        else if (Trim(text) == "Uptime") reply = "UP " + std::to_string(GetTickCount64() - g_LoadTick);   // how long the plugin has run
         else { int k = ApplyConfigText(text); reply = "OK " + std::to_string(k); Log("live: %s", Trim(text).c_str()); }
         sendto(s, reply.c_str(), (int)reply.size(), 0, (SOCKADDR*)&from, fl);
     }
@@ -1597,6 +1597,38 @@ static void ResolveDir(HMODULE self) {
     size_t slash = p.find_last_of("\\/");
     g_Dir = (slash == std::string::npos) ? "" : p.substr(0, slash + 1);
 }
+
+// nEVR runtime (the game's BugSplat64.dll) loads plugins listed in _local/config.yaml
+// from plugins\ only when they export its ABI. Everything starts in DllMain as under
+// dbgcore.dll, so Init has nothing left to do; these exports only make nEVR keep the DLL.
+#include "nevr_plugin_interface.h"
+
+extern "C" {
+
+__declspec(dllexport) NvrPluginInfo NvrPluginGetInfo(void) {
+    NvrPluginInfo info = {};
+    info.name = "echoxr_hands";
+    info.description = "Your own fingers on Echo VR's hands, from OpenXR hand tracking (EchoXR Hands)";
+    info.version_major = 0;
+    info.version_minor = 4;
+    info.version_patch = 0;  // keep in step with VERSION
+    return info;
+}
+
+__declspec(dllexport) uint32_t NvrPluginGetApiVersion(void) { return NEVR_PLUGIN_API_VERSION; }
+
+__declspec(dllexport) uint32_t NvrPluginGetCapabilities(void) {
+    return NEVR_PLUGIN_CAP_COSMETIC | NEVR_PLUGIN_CAP_NETWORK | NEVR_PLUGIN_CAP_HOOKS_ENGINE;
+}
+
+__declspec(dllexport) int NvrPluginInitEx(const NvrGameContext*, const char*) { return 0; }
+
+__declspec(dllexport) int NvrPluginInit(const NvrGameContext*) { return 0; }
+
+// The threads it started keep running until the game exits, as under dbgcore.dll.
+__declspec(dllexport) void NvrPluginShutdown(void) {}
+
+}  // extern "C"
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
